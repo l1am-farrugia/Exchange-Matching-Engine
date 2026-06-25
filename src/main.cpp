@@ -69,9 +69,13 @@ static int run_script(const std::string& script_path, const std::string& record_
         }
     }
 
+    std::vector<ob::Event> events;
+
     for (const auto& cmd : *cmds_opt)
     {
-        const auto events = eng.apply(cmd);
+        events.clear();
+        eng.apply(cmd, events);
+
         for (const auto& e : events)
         {
             std::cout << ob::event_to_line(e) << "\n";
