@@ -52,6 +52,6 @@ namespace ob
         Qty trade_qty { 0 };
 
         // stable token for tests and logs
-        std::string reason;
+        const char* reason { "" };
     };
 }
