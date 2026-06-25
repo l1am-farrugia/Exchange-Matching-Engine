@@ -169,12 +169,17 @@ static int bench_script(const std::string& script_path, std::uint64_t iters)
 
     std::uint64_t total_events { 0 };
 
+    // pre allocate event sink
+    std::vector<ob::Event> events;
+    events.reserve(100000); // prevent resizing
+
     const auto t0 = clock::now();
     for (std::uint64_t i = 0; i < iters; ++i)
     {
         ob::Engine eng;
+        events.clear(); // reset size to 0
 
-        const auto events = eng.apply_all(*cmds_opt);
+        eng.apply_all(*cmds_opt, events);
         total_events += static_cast<std::uint64_t>(events.size());
     }
     const auto t1 = clock::now();
