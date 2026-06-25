@@ -289,7 +289,16 @@ namespace ob
         {
             return std::nullopt;
         }
-        e.reason = value;
+        
+        if (value == "accepted") e.reason = "accepted";
+        else if (value == "filled") e.reason = "filled";
+        else if (value == "trade") e.reason = "trade";
+        else if (value == "resting") e.reason = "resting";
+        else if (value == "cancelled") e.reason = "cancelled";
+        else if (value == "invalid") e.reason = "invalid";
+        else if (value == "not_found") e.reason = "not_found";
+        else if (value == "duplicate_id") e.reason = "duplicate_id";
+        else e.reason = "";
 
         return e;
     }
