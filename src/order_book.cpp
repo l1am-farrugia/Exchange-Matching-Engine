@@ -98,11 +98,9 @@ namespace ob
             }
         }
     }
-
-    std::vector<Event> OrderBook::add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty)
+    // applies an add limit
+    void OrderBook::add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty, std::vector<Event>& out_events) 
     {
-        std::vector<Event> events;
-
         // validate input from caller
         if (!is_valid_input(id, price_ticks, qty))
         {

@@ -19,10 +19,10 @@ namespace ob
     {
     public:
         // applies an add limit and emits events for accept trades and final state
-        std::vector<Event> add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty);
+        void add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty, std::vector<Event>& out_events);
 
         // applies a cancel and emits cancelled or rejected
-        std::vector<Event> cancel(OrderId id);
+        void cancel(OrderId id, std::vector<Event>& out_events);
 
         // number of live resting orders
         std::size_t live_order_count() const;
