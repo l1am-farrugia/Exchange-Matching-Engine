@@ -17,7 +17,7 @@ namespace ob
         return maker_px >= taker_px;
     }
 
-    void OrderBook::remove_filled_maker(std::vector<Event>& events, const Order& maker)
+    void OrderBook::remove_filled_maker(std::vector<Event>& out_events, const Order& maker)
     {
         // maker completion helps replay diffs and tests a lot
         Event e {};
@@ -29,7 +29,7 @@ namespace ob
         e.qty = 0;
         e.remaining_qty = 0;
         e.reason = "filled";
-        events.push_back(e);
+        out_events.push_back(e);
     }
 
     std::size_t OrderBook::recompute_live_count() const
@@ -111,8 +111,8 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "invalid";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         // reject duplicate live ids
@@ -125,8 +125,8 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "duplicate_id";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         // assign taker seq deterministically
@@ -143,7 +143,7 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "accepted";
-            events.push_back(e);
+            out_events.push_back(e);
         }
 
         Qty remaining = qty;
@@ -173,7 +173,7 @@ namespace ob
                     trade.trade_price_ticks = maker_px;
                     trade.trade_qty = fill;
                     trade.reason = "trade";
-                    events.push_back(trade);
+                    out_events.push_back(trade);
 
                     remaining -= fill;
                     it->qty -= fill;
@@ -186,7 +186,7 @@ namespace ob
                         index_.erase(filled_maker.id);
                         it = level.erase(it);
 
-                        remove_filled_maker(events, filled_maker);
+                        remove_filled_maker(out_events, filled_maker);
                     }
                     else
                     {
@@ -223,7 +223,7 @@ namespace ob
                     trade.trade_price_ticks = maker_px;
                     trade.trade_qty = fill;
                     trade.reason = "trade";
-                    events.push_back(trade);
+                    out_events.push_back(trade);
 
                     remaining -= fill;
                     it->qty -= fill;
@@ -235,7 +235,7 @@ namespace ob
                         index_.erase(filled_maker.id);
                         it = level.erase(it);
 
-                        remove_filled_maker(events, filled_maker);
+                        remove_filled_maker(out_events, filled_maker);
                     }
                     else
                     {
@@ -281,7 +281,7 @@ namespace ob
                 e.qty = qty;
                 e.remaining_qty = remaining;
                 e.reason = "resting";
-                events.push_back(e);
+                out_events.push_back(e);
             }
             else
             {
@@ -303,7 +303,7 @@ namespace ob
                 e.qty = qty;
                 e.remaining_qty = remaining;
                 e.reason = "resting";
-                events.push_back(e);
+                out_events.push_back(e);
             }
         }
         else
@@ -318,14 +318,14 @@ namespace ob
             e.qty = qty;
             e.remaining_qty = 0;
             e.reason = "filled";
-            events.push_back(e);
+            out_events.push_back(e);
         }
 
         assert_invariants();
-        return events;
+        return;
     }
 
-    std::vector<Event> OrderBook::cancel(OrderId id)
+    void OrderBook::cancel(OrderId id, std::vector<Event>& out_events)
     {
         std::vector<Event> events;
 
@@ -336,8 +336,8 @@ namespace ob
             e.type = EventType::CancelRejected;
             e.id = id;
             e.reason = "invalid";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         auto idx_it = index_.find(id);
@@ -347,8 +347,8 @@ namespace ob
             e.type = EventType::CancelRejected;
             e.id = id;
             e.reason = "not_found";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         const Locator loc = idx_it->second;
@@ -395,10 +395,10 @@ namespace ob
         e.qty = snapshot.qty;
         e.remaining_qty = 0;
         e.reason = "cancelled";
-        events.push_back(e);
+        out_events.push_back(e);
 
         assert_invariants();
-        return events;
+        return;
     }
 
     std::size_t OrderBook::live_order_count() const
