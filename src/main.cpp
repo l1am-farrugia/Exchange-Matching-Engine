@@ -106,7 +106,8 @@ static int replay_script(const std::string& script_path, const std::string& even
 
     std::vector<std::string> actual_lines;
     {
-        const auto events = eng.apply_all(*cmds_opt);
+        std::vector<ob::Event> events;
+        eng.apply_all(*cmds_opt, events);
         actual_lines.reserve(events.size());
 
         for (const auto& e : events)

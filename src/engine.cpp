@@ -29,7 +29,7 @@ namespace ob
             log_->flush();
         }
 
-        return events;
+        return;
     }
 
     void Engine::apply_all(const std::vector<Command>& cmds, std::vector<Event>& out_events)
