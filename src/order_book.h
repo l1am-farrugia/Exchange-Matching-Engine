@@ -42,14 +42,24 @@ namespace ob
 
     private:
         // a price level holds fifo orders
-        using PriceLevel = std::list<Order>;
+        struct IntrusivePriceLevel
+        {
+            Order* head { nullptr };
+            Order* tail { nullptr };
+            std::size_t count { 0 };
+
+            bool empty() const { return head == nullptr; }
+            std::size_t size() const { return count; }
+        };
+
+        using PriceLevel = IntrusivePriceLevel;
 
         // locator points to an exact stored order
         struct Locator
         {
             Side side { Side::Buy };
             PriceTicks price_ticks { 0 };
-            PriceLevel::iterator it {};
+            Order* order_ptr { nullptr };
         };
 
         // assigns the next seq value
