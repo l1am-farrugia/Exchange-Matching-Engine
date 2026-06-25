@@ -29,7 +29,7 @@ TEST(Matching, SimpleCrossTradeAtMakerPrice)
     eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 150, 4), ev2);
 
     bool saw_trade = false;
-    for (const auto& e : ev)
+    for (const auto& e : ev2)
     {
         if (e.type == ob::EventType::Trade)
         {
