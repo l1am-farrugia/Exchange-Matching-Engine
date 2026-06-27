@@ -18,6 +18,13 @@ namespace ob
     class OrderBook
     {
     public:
+
+        OrderBook() = default;
+        ~OrderBook();
+
+        OrderBook(const OrderBook&) = delete;
+        OrderBook& operator=(const OrderBook&) = delete;
+
         // applies an add limit and emits events for accept trades and final state
         void add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty, std::vector<Event>& out_events);
 
@@ -41,6 +48,14 @@ namespace ob
         Qty total_qty_at(Side side, PriceTicks price_ticks) const;
 
     private:
+
+        // Memory pool state
+        std::vector<Order*> blocks_;
+        Order* free_list_{nullptr};
+
+        Order* allocate_order();
+        void free_order(Order* o);
+
         // a price level holds fifo orders
         struct IntrusivePriceLevel
         {

@@ -82,8 +82,8 @@ TEST(Engine, CancelRemovesExactOrderAndCleansLevel)
     EXPECT_EQ(ids[0], 20u);
     EXPECT_EQ(ids[1], 22u);
 
-    eng.apply(ob::Command::cancel(20));
-    eng.apply(ob::Command::cancel(22));
+    eng.apply(ob::Command::cancel(20), events);
+    eng.apply(ob::Command::cancel(22), events);
 
     // now that level should be gone
     const auto ids2 = eng.book().order_ids_at(ob::Side::Buy, 10'000);
@@ -149,7 +149,7 @@ TEST(Engine, RejectsInvalidInputs)
 
     eng.apply(ob::Command::add_limit(0, ob::Side::Buy, 10'000, 100), e1);
     eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 0, 100), e2);
-    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 10'000, 0), e3)
+    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 10'000, 0), e3);
 
     ASSERT_EQ(e1.size(), 1u);
     ASSERT_EQ(e2.size(), 1u);
