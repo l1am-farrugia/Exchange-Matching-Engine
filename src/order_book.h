@@ -80,11 +80,14 @@ namespace ob
         // assigns the next seq value
         std::uint64_t next_seq_ { 1 };
 
-        // bids sorted by highest price first
-        std::map<PriceTicks, PriceLevel, std::greater<PriceTicks>> bids_;
+        struct LevelRecord
+        {
+            PriceTicks price_ticks{0};
+            PriceLevel level{};
+        };
 
-        // asks sorted by lowest price first
-        std::map<PriceTicks, PriceLevel, std::less<PriceTicks>> asks_;
+        std::vector<LevelRecord> bids_;
+        std::vector<LevelRecord> asks_;
 
         // id index for fast cancel and direct access
         std::unordered_map<OrderId, Locator> index_;

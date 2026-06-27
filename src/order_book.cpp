@@ -68,33 +68,37 @@ namespace ob
         out_events.push_back(e);
     }
 
+
+
+
+
+
     // Aggregates count from all price levels to verify against the index
     std::size_t OrderBook::recompute_live_count() const
     {
         std::size_t total { 0 };
-        for (const auto& kv : bids_)
+        for (const auto& record : bids_)
         {
-            total += kv.second.size();
+            total += record.level.size();
         }
-        for (const auto& kv : asks_)
+        for (const auto& record : asks_)
         {
-            total += kv.second.size();
+            total += record.level.size();
         }
         return total;
     }
 
-    // Validates system state consistency between containers and indices
     void OrderBook::assert_invariants() const
     {
         assert(index_.size() == recompute_live_count());
 
-        for (const auto& kv : bids_)
+        for (const auto& record : bids_)
         {
-            assert(!kv.second.empty());
-            for (Order* o = kv.second.head; o != nullptr; o = o->next)
+            assert(!record.level.empty());
+            for (Order* o = record.level.head; o != nullptr; o = o->next)
             {
                 assert(o->side == Side::Buy);
-                assert(o->price_ticks == kv.first);
+                assert(o->price_ticks == record.price_ticks);
                 assert(o->qty > 0);
                 assert(o->seq != 0);
 
@@ -102,18 +106,18 @@ namespace ob
                 assert(it != index_.end());
 
                 assert(it->second.side == Side::Buy);
-                assert(it->second.price_ticks == kv.first);
+                assert(it->second.price_ticks == record.price_ticks);
                 assert(it->second.order_ptr->id == o->id);
             }
         }
 
-        for (const auto& kv : asks_)
+        for (const auto& record : asks_)
         {
-            assert(!kv.second.empty());
-            for (Order* o = kv.second.head; o != nullptr; o = o->next)
+            assert(!record.level.empty());
+            for (Order* o = record.level.head; o != nullptr; o = o->next)
             {
                 assert(o->side == Side::Sell);
-                assert(o->price_ticks == kv.first);
+                assert(o->price_ticks == record.price_ticks);
                 assert(o->qty > 0);
                 assert(o->seq != 0);
 
@@ -121,7 +125,7 @@ namespace ob
                 assert(it != index_.end());
 
                 assert(it->second.side == Side::Sell);
-                assert(it->second.price_ticks == kv.first);
+                assert(it->second.price_ticks == record.price_ticks);
                 assert(it->second.order_ptr->id == o->id);
             }
         }
@@ -177,13 +181,14 @@ namespace ob
         if (side == Side::Buy)
         {
             // Traverse asks to find matching liquidity
-            while (remaining > 0 && !asks_.empty() && crosses(side, price_ticks, asks_.begin()->first))
+            while (remaining > 0 && !asks_.empty() && crosses(side, price_ticks, asks_.front().price_ticks))
             {
                 auto lvl_it = asks_.begin();
-                const PriceTicks maker_px = lvl_it->first;
-                PriceLevel& level = lvl_it->second;
+                const PriceTicks maker_px = lvl_it->price_ticks;
+                PriceLevel& level = lvl_it->level;
 
                 Order* it = level.head;
+
                 while (remaining > 0 && it != nullptr)
                 {
                     const Qty fill = std::min(remaining, it->qty);
@@ -234,13 +239,14 @@ namespace ob
         else
         {
             // Traverse bids to find matching liquidity
-            while (remaining > 0 && !bids_.empty() && crosses(side, price_ticks, bids_.begin()->first))
+            while (remaining > 0 && !bids_.empty() && crosses(side, price_ticks, bids_.front().price_ticks))
             {
                 auto lvl_it = bids_.begin();
-                const PriceTicks maker_px = lvl_it->first;
-                PriceLevel& level = lvl_it->second;
+                const PriceTicks maker_px = lvl_it->price_ticks;
+                PriceLevel& level = lvl_it->level;
 
                 Order* it = level.head;
+
                 while (remaining > 0 && it != nullptr)
                 {
                     const Qty fill = std::min(remaining, it->qty);
@@ -302,8 +308,12 @@ namespace ob
 
             if (side == Side::Buy)
             {
-                auto [lvl_it, created] = bids_.try_emplace(price_ticks, PriceLevel {});
-                PriceLevel& level = lvl_it->second;
+                auto it = std::lower_bound(bids_.begin(), bids_.end(), price_ticks,
+                    [](const LevelRecord& r, PriceTicks px) { return r.price_ticks > px; });
+                if (it == bids_.end() || it->price_ticks != price_ticks) {
+                    it = bids_.insert(it, LevelRecord{price_ticks, PriceLevel{}});
+                }
+                PriceLevel& level = it->level;
 
                 // FIFO insertion at tail
                 if (level.tail == nullptr)
@@ -335,8 +345,12 @@ namespace ob
             }
             else
             {
-                auto [lvl_it, created] = asks_.try_emplace(price_ticks, PriceLevel {});
-                PriceLevel& level = lvl_it->second;
+                auto it = std::lower_bound(asks_.begin(), asks_.end(), price_ticks,
+                    [](const LevelRecord& r, PriceTicks px) { return r.price_ticks < px; });
+                if (it == asks_.end() || it->price_ticks != price_ticks) {
+                    it = asks_.insert(it, LevelRecord{price_ticks, PriceLevel{}});
+                }
+                PriceLevel& level = it->level;
 
                 if (level.tail == nullptr)
                 {
@@ -413,9 +427,10 @@ namespace ob
 
         if (loc.side == Side::Buy)
         {
-            auto lvl_it = bids_.find(loc.price_ticks);
-            assert(lvl_it != bids_.end());
-            PriceLevel& level = lvl_it->second;
+            auto lvl_it = std::lower_bound(bids_.begin(), bids_.end(), loc.price_ticks,
+                [](const LevelRecord& r, PriceTicks px) { return r.price_ticks > px; });
+            assert(lvl_it != bids_.end() && lvl_it->price_ticks == loc.price_ticks);
+            PriceLevel& level = lvl_it->level;
 
             // Update linked list head/tail if necessary
             if (it->prev) it->prev->next = it->next;
@@ -433,9 +448,10 @@ namespace ob
         }
         else
         {
-            auto lvl_it = asks_.find(loc.price_ticks);
-            assert(lvl_it != asks_.end());
-            PriceLevel& level = lvl_it->second;
+            auto lvl_it = std::lower_bound(asks_.begin(), asks_.end(), loc.price_ticks,
+                [](const LevelRecord& r, PriceTicks px) { return r.price_ticks < px; });
+            assert(lvl_it != asks_.end() && lvl_it->price_ticks == loc.price_ticks);
+            PriceLevel& level = lvl_it->level;
 
             if (it->prev) it->prev->next = it->next;
             else level.head = it->next;
@@ -467,7 +483,7 @@ namespace ob
 
         assert_invariants();
     }
-
+    
     std::size_t OrderBook::live_order_count() const
     {
         return index_.size();
@@ -481,13 +497,13 @@ namespace ob
     std::optional<PriceTicks> OrderBook::best_bid_price() const
     {
         if (bids_.empty()) return std::nullopt;
-        return bids_.begin()->first;
+        return bids_.front().price_ticks;
     }
 
     std::optional<PriceTicks> OrderBook::best_ask_price() const
     {
         if (asks_.empty()) return std::nullopt;
-        return asks_.begin()->first;
+        return asks_.front().price_ticks;
     }
 
     std::vector<OrderId> OrderBook::order_ids_at(Side side, PriceTicks price_ticks) const
@@ -496,22 +512,24 @@ namespace ob
 
         if (side == Side::Buy)
         {
-            auto it = bids_.find(price_ticks);
-            if (it == bids_.end()) return out_ids;
+            auto it = std::lower_bound(bids_.begin(), bids_.end(), price_ticks,
+                [](const LevelRecord& r, PriceTicks px) { return r.price_ticks > px; });
+            if (it == bids_.end() || it->price_ticks != price_ticks) return out_ids;
 
-            out_ids.reserve(it->second.size());
-            for (Order* o = it->second.head; o != nullptr; o = o->next)
+            out_ids.reserve(it->level.size());
+            for (Order* o = it->level.head; o != nullptr; o = o->next)
             {
                 out_ids.push_back(o->id);
             }
             return out_ids;
         }
 
-        auto it = asks_.find(price_ticks);
-        if (it == asks_.end()) return out_ids;
+        auto it = std::lower_bound(asks_.begin(), asks_.end(), price_ticks,
+            [](const LevelRecord& r, PriceTicks px) { return r.price_ticks < px; });
+        if (it == asks_.end() || it->price_ticks != price_ticks) return out_ids;
 
-        out_ids.reserve(it->second.size());
-        for (Order* o = it->second.head; o != nullptr; o = o->next)
+        out_ids.reserve(it->level.size());
+        for (Order* o = it->level.head; o != nullptr; o = o->next)
         {
             out_ids.push_back(o->id);
         }
@@ -524,20 +542,22 @@ namespace ob
 
         if (side == Side::Buy)
         {
-            auto it = bids_.find(price_ticks);
-            if (it == bids_.end()) return 0;
+            auto it = std::lower_bound(bids_.begin(), bids_.end(), price_ticks,
+                [](const LevelRecord& r, PriceTicks px) { return r.price_ticks > px; });
+            if (it == bids_.end() || it->price_ticks != price_ticks) return 0;
 
-            for (Order* o = it->second.head; o != nullptr; o = o->next)
+            for (Order* o = it->level.head; o != nullptr; o = o->next)
             {
                 total += o->qty;
             }
             return total;
         }
 
-        auto it = asks_.find(price_ticks);
-        if (it == asks_.end()) return 0;
+        auto it = std::lower_bound(asks_.begin(), asks_.end(), price_ticks,
+            [](const LevelRecord& r, PriceTicks px) { return r.price_ticks < px; });
+        if (it == asks_.end() || it->price_ticks != price_ticks) return 0;
 
-        for (Order* o = it->second.head; o != nullptr; o = o->next)
+        for (Order* o = it->level.head; o != nullptr; o = o->next)
         {
             total += o->qty;
         }

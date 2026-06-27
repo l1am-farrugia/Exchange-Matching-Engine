@@ -1,0 +1,16 @@
+Tracking benchmarks over commits.
+------------------------------------------
+Commit: perf(core): implement zero-allocation slab memory pool for orders
+
+-- Ran for 1 million iterations (bench iters)
+bench iters=1000000 total_ns=8744806333
+per_iter_ns=8744
+per_event_ns=728
+
+
+Commit: perf(core): replace std::map with flat sorted vectors for cache locality
+
+-- Ran for 1 million iterations (bench iters)
+bench iters=1000000 total_ns=8500216880
+per_iter_ns=8500
+per_event_ns=708
