@@ -5,6 +5,44 @@
 
 namespace ob
 {
+
+    OrderBook::~OrderBook()
+    {
+        for (Order* block : blocks_)
+        {
+            delete[] block;
+        }
+    }
+
+    Order* OrderBook::allocate_order()
+    {
+        if (free_list_ != nullptr)
+        {
+            Order* o = free_list_;
+            free_list_ = o->next;
+            return o;
+        }
+
+        constexpr std::size_t BLOCK_SIZE = 4096;
+        Order* block = new Order[BLOCK_SIZE];
+        blocks_.push_back(block);
+
+        for (std::size_t i = 0; i < BLOCK_SIZE - 1; ++i)
+        {
+            block[i].next = &block[i + 1];
+        }
+        block[BLOCK_SIZE - 1].next = nullptr;
+
+        free_list_ = block->next;
+        return block;
+    }
+
+    void OrderBook::free_order(Order* o)
+    {
+        o->next = free_list_;
+        free_list_ = o;
+    }
+
     // Determines if a resting maker order meets the taker's price limit requirement
     bool OrderBook::crosses(Side taker_side, PriceTicks taker_px, PriceTicks maker_px) const
     {
@@ -180,7 +218,7 @@ namespace ob
                         
                         level.count--;
 
-                        delete it;
+                        free_order(it);
                         remove_filled_maker(out_events, filled_maker);
                     }
                     
@@ -236,7 +274,7 @@ namespace ob
                         
                         level.count--;
 
-                        delete it;
+                        free_order(it);
                         remove_filled_maker(out_events, filled_maker);
                     }
                     
@@ -253,7 +291,7 @@ namespace ob
         if (remaining > 0)
         {
             // Rest remainder in the book
-            Order* o = new Order();
+            Order* o = allocate_order();
             o->id = id;
             o->side = side;
             o->price_ticks = price_ticks;
@@ -414,7 +452,7 @@ namespace ob
         }
 
         index_.erase(idx_it);
-        delete it; 
+        free_order(it); 
 
         Event e {};
         e.type = EventType::OrderCancelled;
