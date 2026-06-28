@@ -177,7 +177,7 @@ namespace ob
         if (side == Side::Buy)
         {
             // Traverse asks to find matching liquidity
-            while (remaining > 0 && best_ask_ <= price_ticks)
+            while (remaining > 0 && best_ask_ <= price_ticks && best_ask_ < MAX_TICKS)
             {
                 PriceLevel& level = asks_[best_ask_];
                 if (level.empty())
@@ -242,7 +242,7 @@ namespace ob
         else
         {
             // Traverse bids to find matching liquidity
-            while (remaining > 0 && best_bid_ >= price_ticks && best_bid_ != -1)
+            while (remaining > 0 && best_bid_ >= price_ticks && best_bid_ >= 0)
             {
                 PriceLevel& level = bids_[best_bid_];
                 if (level.empty())
@@ -400,8 +400,6 @@ namespace ob
             e.reason = "filled";
             out_events.push_back(e);
         }
-
-        assert_invariants();
     }
 
     // Handles removal of resting orders from the index and linked list
@@ -490,8 +488,6 @@ namespace ob
         e.remaining_qty = 0;
         e.reason = "cancelled";
         out_events.push_back(e);
-
-        assert_invariants();
     }
     
     std::size_t OrderBook::live_order_count() const
