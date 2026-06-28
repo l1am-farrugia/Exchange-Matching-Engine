@@ -19,7 +19,7 @@ namespace ob
     {
     public:
 
-        OrderBook() = default;
+        OrderBook();
         ~OrderBook();
 
         OrderBook(const OrderBook&) = delete;
@@ -80,14 +80,14 @@ namespace ob
         // assigns the next seq value
         std::uint64_t next_seq_ { 1 };
 
-        struct LevelRecord
-        {
-            PriceTicks price_ticks{0};
-            PriceLevel level{};
-        };
+        static constexpr std::int64_t MAX_TICKS = 1000000;
 
-        std::vector<LevelRecord> bids_;
-        std::vector<LevelRecord> asks_;
+        // O(1) level lookups from direct mapping 
+        std::vector<PriceLevel> bids_;
+        std::vector<PriceLevel> asks_;
+        
+        PriceTicks best_bid_ { -1 };
+        PriceTicks best_ask_ { MAX_TICKS };
 
         // id index for fast cancel and direct access
         std::unordered_map<OrderId, Locator> index_;
