@@ -232,7 +232,10 @@ namespace ob
 
                 if (level.empty())
                 {
-                    best_ask_++;
+                    while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
+                    {
+                        best_ask_++;
+                    }
                 }
             }
         }
@@ -293,7 +296,10 @@ namespace ob
 
                 if (level.empty())
                 {
-                    best_bid_--;
+                    while (best_bid_ >= 0 && bids_[best_bid_].empty()) 
+                    {
+                        best_bid_--;
+                    }
                 }
             }
         }
