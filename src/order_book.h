@@ -31,6 +31,9 @@ namespace ob
         // applies a cancel and emits cancelled or rejected
         void cancel(OrderId id, std::vector<Event>& out_events);
 
+        // resets the book state to reuse memory
+        void reset(); 
+
         // number of live resting orders
         std::size_t live_order_count() const;
 

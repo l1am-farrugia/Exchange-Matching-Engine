@@ -517,6 +517,32 @@ namespace ob
         e.reason = "cancelled";
         out_events.push_back(e);
     }
+
+    void OrderBook::reset()
+    {
+        index_.clear();
+        std::fill(bids_.begin(), bids_.end(), PriceLevel{});
+        std::fill(asks_.begin(), asks_.end(), PriceLevel{});
+        
+        // allocated slabs back into the free list
+        free_list_ = nullptr;
+        for (Order* block : blocks_)
+        {
+            constexpr std::size_t BLOCK_SIZE = 4096;
+            for (std::size_t i = 0; i < BLOCK_SIZE - 1; ++i)
+            {
+                block[i].next = &block[i + 1];
+            }
+            block[BLOCK_SIZE - 1].next = free_list_;
+            free_list_ = &block[0];
+        }
+
+        best_bid_ = -1;
+        best_ask_ = MAX_TICKS;
+        active_bid_count_ = 0;
+        active_ask_count_ = 0;
+        next_seq_ = 1;
+    }
     
     std::size_t OrderBook::live_order_count() const
     {

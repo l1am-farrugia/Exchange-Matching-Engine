@@ -33,13 +33,13 @@ namespace ob
     }
 
     void Engine::apply_all(const std::vector<Command>& cmds, std::vector<Event>& out_events)
+    {
+        // apply sequentially to preserve determinism
+        for (const auto& c : cmds)
         {
-            // apply sequentially to preserve determinism
-            for (const auto& c : cmds)
-            {
-                apply(c, out_events);
-            }
+            apply(c, out_events);
         }
+    }
 
     bool Engine::start_event_log(const std::string& path)
     {
