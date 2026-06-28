@@ -178,18 +178,22 @@ static int bench_script(const std::string& script_path, std::uint64_t iters)
     std::vector<ob::Event> events;
     events.reserve(100000); // prevent resizing
 
-    const auto t0 = clock::now();
+    std::uint64_t total_ns { 0 };
+
     for (std::uint64_t i = 0; i < iters; ++i)
     {
         ob::Engine eng;
         events.clear(); // reset size to 0
 
+        const auto t0 = clock::now();
         eng.apply_all(*cmds_opt, events);
+        const auto t1 = clock::now();
+
+        total_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         total_events += static_cast<std::uint64_t>(events.size());
     }
-    const auto t1 = clock::now();
 
-    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    const auto ns = total_ns;
 
     const double per_iter_ns = static_cast<double>(ns) / static_cast<double>(iters);
     const double per_event_ns = (total_events > 0) ? (static_cast<double>(ns) / static_cast<double>(total_events)) : 0.0;
