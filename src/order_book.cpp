@@ -222,6 +222,7 @@ namespace ob
                         else level.tail = it->prev;
                         
                         level.count--;
+                        active_ask_count_--;
 
                         free_order(it);
                         remove_filled_maker(out_events, filled_maker);
@@ -232,9 +233,16 @@ namespace ob
 
                 if (level.empty())
                 {
-                    while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
+                    if (active_ask_count_ == 0) 
                     {
-                        best_ask_++;
+                        best_ask_ = MAX_TICKS;
+                    }
+                    else 
+                    {
+                        while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
+                        {
+                            best_ask_++;
+                        }
                     }
                 }
             }
@@ -286,6 +294,7 @@ namespace ob
                         else level.tail = it->prev;
                         
                         level.count--;
+                        active_bid_count_--;
 
                         free_order(it);
                         remove_filled_maker(out_events, filled_maker);
@@ -296,9 +305,16 @@ namespace ob
 
                 if (level.empty())
                 {
-                    while (best_bid_ >= 0 && bids_[best_bid_].empty()) 
+                    if (active_bid_count_ == 0) 
                     {
-                        best_bid_--;
+                        best_bid_ = -1; 
+                    }
+                    else 
+                    {
+                        while (best_bid_ >= 0 && bids_[best_bid_].empty()) 
+                        {
+                            best_bid_--;
+                        }
                     }
                 }
             }
@@ -336,6 +352,7 @@ namespace ob
 
                 // Track highest bid
                 if (price_ticks > best_bid_) best_bid_ = price_ticks;
+                active_bid_count_++;
 
                 const bool ok = index_.emplace(id, Locator { side, price_ticks, o }).second;
                 assert(ok);
@@ -370,7 +387,8 @@ namespace ob
                 level.count++;
 
                 // Track lowest ask
-                if (price_ticks < best_ask_) best_ask_ = price_ticks;
+                if (price_ticks < best_ask_) best_ask_ = price_ticks;\
+                active_ask_count_++;
 
                 const bool ok = index_.emplace(id, Locator { side, price_ticks, o }).second;
                 assert(ok);
@@ -442,9 +460,14 @@ namespace ob
             else level.tail = it->prev;
             
             level.count--;
+            active_bid_count_--;
 
-            // If we removed the best bid, walk down to find the next one
-            if (level.empty() && loc.price_ticks == best_bid_)
+            // If we removed the best bid, go down to find the next one
+            if (active_bid_count_ == 0)
+            {
+                best_bid_ = -1;
+            }
+            else if (level.empty() && loc.price_ticks == best_bid_)
             {
                 while (best_bid_ >= 0 && bids_[best_bid_].empty())
                 {
@@ -464,9 +487,14 @@ namespace ob
             else level.tail = it->prev;
             
             level.count--;
+            active_ask_count_--;
 
             // If we removed the best ask, walk up to find the next one
-            if (level.empty() && loc.price_ticks == best_ask_)
+            if (active_ask_count_ == 0)
+            {
+                best_ask_ = MAX_TICKS;
+            }
+            else if (level.empty() && loc.price_ticks == best_ask_)
             {
                 while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
                 {

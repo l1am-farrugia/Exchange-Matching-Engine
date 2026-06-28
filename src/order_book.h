@@ -86,8 +86,12 @@ namespace ob
         std::vector<PriceLevel> bids_;
         std::vector<PriceLevel> asks_;
         
+        // track best prices and jump directly to the top of the book
         PriceTicks best_bid_ { -1 };
         PriceTicks best_ask_ { MAX_TICKS };
+
+        std::size_t active_bid_count_ { 0 };
+        std::size_t active_ask_count_ { 0 };
 
         // id index for fast cancel and direct access
         std::unordered_map<OrderId, Locator> index_;
