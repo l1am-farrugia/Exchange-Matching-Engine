@@ -180,9 +180,11 @@ static int bench_script(const std::string& script_path, std::uint64_t iters)
 
     std::uint64_t total_ns { 0 };
 
+    ob::Engine eng;
+
     for (std::uint64_t i = 0; i < iters; ++i)
     {
-        ob::Engine eng;
+        eng.reset(); // clears state and keeps allocation
         events.clear(); // reset size to 0
 
         const auto t0 = clock::now();

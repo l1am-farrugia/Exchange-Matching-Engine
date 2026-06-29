@@ -41,6 +41,11 @@ namespace ob
         }
     }
 
+    void Engine::reset() 
+    {
+        book_.reset();
+    }
+
     bool Engine::start_event_log(const std::string& path)
     {
         // opens the log file and enables event writing

@@ -20,6 +20,9 @@ namespace ob
         
         // applies a list of commands and appends events
         void apply_all(const std::vector<Command>& cmds, std::vector<Event>& out_events);
+
+        // completely resets internal orderbook state
+        void reset(); 
         
         // enable file logging of events
         bool start_event_log(const std::string& path);
