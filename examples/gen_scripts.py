@@ -10,13 +10,13 @@ def generate_events(filename, num_events, price_min, price_max):
                 side = random.choice(['B', 'S'])
                 price = random.randint(price_min, price_max)
                 qty = random.randint(1, 100)
-                f.write(f"A {next_id} {side} {price} {qty}\n")
+                f.write(f"add {next_id} {side} {price} {qty}\n")
                 active_ids.append(next_id)
                 next_id += 1
             else:
                 cancel_idx = random.randrange(len(active_ids))
                 cancel_id = active_ids.pop(cancel_idx)
-                f.write(f"C {cancel_id}\n")
+                f.write(f"cancel {cancel_id}\n")
 
 if __name__ == '__main__':
     generate_events("dense_script.txt", 50000, 499950, 500050)
