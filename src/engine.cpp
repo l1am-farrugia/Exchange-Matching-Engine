@@ -4,46 +4,46 @@
 
 namespace ob
 {
-    std::vector<Event> Engine::apply(const Command& cmd)
+    void Engine::apply(const Command& cmd, std::vector<Event>& out_events)
     {
-        std::vector<Event> events;
+        const std::size_t start_idx = out_events.size();
 
         // dispatch on command type
         if (cmd.type == CommandType::AddLimit)
         {
-            events = book_.add_limit(cmd.id, cmd.side, cmd.price_ticks, cmd.qty);
+            book_.add_limit(cmd.id, cmd.side, cmd.price_ticks, cmd.qty, out_events);
         }
         else
         {
-            events = book_.cancel(cmd.id);
+            book_.cancel(cmd.id, out_events);
         }
 
         // log if enabled
         if (log_.has_value())
         {
-            for (const auto& e : events)
+            for (std::size_t i = start_idx; i < out_events.size(); ++i)
             {
                 // write each event on its own line
-                (*log_) << event_to_line(e) << "\n";
+                (*log_) << event_to_line(out_events[i]) << "\n";
             }
             log_->flush();
         }
 
-        return events;
+        return;
     }
 
-    std::vector<Event> Engine::apply_all(const std::vector<Command>& cmds)
+    void Engine::apply_all(const std::vector<Command>& cmds, std::vector<Event>& out_events)
     {
-        std::vector<Event> out;
-
         // apply sequentially to preserve determinism
         for (const auto& c : cmds)
         {
-            const auto es = apply(c);
-            out.insert(out.end(), es.begin(), es.end());
+            apply(c, out_events);
         }
+    }
 
-        return out;
+    void Engine::reset() 
+    {
+        book_.reset();
     }
 
     bool Engine::start_event_log(const std::string& path)

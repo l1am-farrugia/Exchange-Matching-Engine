@@ -28,6 +28,8 @@ namespace ob
         PriceTicks price_ticks { 0 };
         Qty qty { 0 }; // remaining qty
         std::uint64_t seq { 0 }; // assigned by book
+        Order* next { nullptr };
+        Order* prev { nullptr };
     };
 
     // validates caller supplied values for add limit

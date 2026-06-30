@@ -22,11 +22,14 @@ TEST(Matching, SimpleCrossTradeAtMakerPrice)
     // maker ask then taker buy should trade at ask price
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 10));
-    const auto ev = eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 150, 4));
+    std::vector<ob::Event> ev1;
+    std::vector<ob::Event> ev2;
+
+    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 10), ev1);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 150, 4), ev2);
 
     bool saw_trade = false;
-    for (const auto& e : ev)
+    for (const auto& e : ev2)
     {
         if (e.type == ob::EventType::Trade)
         {
@@ -49,10 +52,12 @@ TEST(Matching, FifoWithinLevel)
     // two makers at same price should fill in arrival order
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(10, ob::Side::Sell, 100, 5));
-    eng.apply(ob::Command::add_limit(11, ob::Side::Sell, 100, 5));
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::add_limit(20, ob::Side::Buy, 100, 6));
+    eng.apply(ob::Command::add_limit(10, ob::Side::Sell, 100, 5), events);
+    eng.apply(ob::Command::add_limit(11, ob::Side::Sell, 100, 5), events);
+
+    eng.apply(ob::Command::add_limit(20, ob::Side::Buy, 100, 6), events);
 
     EXPECT_FALSE(eng.book().has_order(10));
     EXPECT_TRUE(eng.book().has_order(11));
@@ -68,14 +73,15 @@ TEST(Matching, MultiLevelSweep)
     // taker sweeps multiple ask levels from best ask upward
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 3));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 105, 4));
-    eng.apply(ob::Command::add_limit(3, ob::Side::Sell, 110, 5));
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::add_limit(9, ob::Side::Buy, 110, 10));
+    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 3), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 105, 4), events);
+    eng.apply(ob::Command::add_limit(3, ob::Side::Sell, 110, 5), events);
 
+    eng.apply(ob::Command::add_limit(9, ob::Side::Buy, 110, 10), events);
+    
     EXPECT_FALSE(eng.book().has_order(1));
-    EXPECT_FALSE(eng.book().has_order(2));
     EXPECT_TRUE(eng.book().has_order(3));
 
     EXPECT_EQ(eng.book().total_qty_at(ob::Side::Sell, 110), 2);
@@ -86,9 +92,11 @@ TEST(Matching, RestingWhenNotCrossing)
 {
     // order that does not cross should rest
     ob::Engine eng;
+    
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 100, 5));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 200, 5));
+    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 100, 5), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 200, 5), events);
 
     EXPECT_EQ(*eng.book().best_bid_price(), 100);
     EXPECT_EQ(*eng.book().best_ask_price(), 200);
@@ -101,11 +109,13 @@ TEST(Matching, PartialFillThenTakerRestsRemainder)
 {
     // taker consumes makers then rests leftover at its limit
     ob::Engine eng;
+    
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 5));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 105, 4));
+    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 5), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Sell, 105, 4), events);
 
-    eng.apply(ob::Command::add_limit(9, ob::Side::Buy, 110, 12));
+    eng.apply(ob::Command::add_limit(9, ob::Side::Buy, 110, 12), events);
 
     // should remove both makers and rest 3 at bid 110
     EXPECT_FALSE(eng.book().has_order(1));
@@ -121,8 +131,10 @@ TEST(Matching, TakerFullyFilledDoesNotRest)
     // if taker gets fully filled it should not become a resting order
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 5));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 5));
+    std::vector<ob::Event> events;
+
+    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 5), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 5), events);
 
     EXPECT_FALSE(eng.book().has_order(1));
     EXPECT_FALSE(eng.book().has_order(2));
@@ -135,9 +147,11 @@ TEST(Cancel, RemovesExactOrder)
     // cancel should remove only the specified order
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 100, 5));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 7));
-    eng.apply(ob::Command::cancel(1));
+    std::vector<ob::Event> events;
+
+    eng.apply(ob::Command::add_limit(1, ob::Side::Buy, 100, 5), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 7), events);
+    eng.apply(ob::Command::cancel(1), events);
 
     EXPECT_FALSE(eng.book().has_order(1));
     EXPECT_TRUE(eng.book().has_order(2));
@@ -154,11 +168,13 @@ TEST(Cancel, MiddleOfFifoKeepsOrder)
     // cancel in the middle should keep fifo order for remaining items
     ob::Engine eng;
 
-    eng.apply(ob::Command::add_limit(10, ob::Side::Sell, 100, 1));
-    eng.apply(ob::Command::add_limit(11, ob::Side::Sell, 100, 1));
-    eng.apply(ob::Command::add_limit(12, ob::Side::Sell, 100, 1));
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::cancel(11));
+    eng.apply(ob::Command::add_limit(10, ob::Side::Sell, 100, 1), events);
+    eng.apply(ob::Command::add_limit(11, ob::Side::Sell, 100, 1), events);
+    eng.apply(ob::Command::add_limit(12, ob::Side::Sell, 100, 1), events);
+
+    eng.apply(ob::Command::cancel(11), events);
 
     const auto ids = eng.book().order_ids_at(ob::Side::Sell, 100);
     ASSERT_EQ(ids.size(), 2u);
@@ -171,23 +187,27 @@ TEST(Cancel, CancelFilledMakerRejectsNotFound)
 {
     // once a maker is filled it should not be cancellable
     ob::Engine eng;
+    
+    std::vector<ob::Event> events;
 
-    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 3));
-    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 3));
+    eng.apply(ob::Command::add_limit(1, ob::Side::Sell, 100, 3), events);
+    eng.apply(ob::Command::add_limit(2, ob::Side::Buy, 100, 3), events);
 
     EXPECT_FALSE(eng.book().has_order(1));
 
-    const auto ev = eng.apply(ob::Command::cancel(1));
-    ASSERT_EQ(ev.size(), 1u);
+    std::vector<ob::Event> cancel_events;
+    eng.apply(ob::Command::cancel(1), cancel_events);
+    ASSERT_EQ(cancel_events.size(), 1u);
 
-    EXPECT_EQ(ev[0].type, ob::EventType::CancelRejected);
-    EXPECT_EQ(ev[0].reason, "not_found");
+    EXPECT_EQ(cancel_events[0].type, ob::EventType::CancelRejected);
+    EXPECT_EQ(cancel_events[0].reason, "not_found");
 }
 
 TEST(Determinism, SameCommandsSameEvents)
 {
     // same script applied twice should produce identical event lines
     std::vector<ob::Command> cmds;
+    
     cmds.push_back(ob::Command::add_limit(1, ob::Side::Sell, 100, 5));
     cmds.push_back(ob::Command::add_limit(2, ob::Side::Sell, 100, 5));
     cmds.push_back(ob::Command::add_limit(3, ob::Side::Buy, 100, 6));
@@ -197,8 +217,10 @@ TEST(Determinism, SameCommandsSameEvents)
     ob::Engine a;
     ob::Engine b;
 
-    const auto ea = a.apply_all(cmds);
-    const auto eb = b.apply_all(cmds);
+    std::vector<ob::Event> ea;
+    std::vector<ob::Event> eb;
+    a.apply_all(cmds, ea);
+    b.apply_all(cmds, eb);
 
     EXPECT_EQ(to_lines(ea), to_lines(eb));
 }

@@ -69,9 +69,13 @@ static int run_script(const std::string& script_path, const std::string& record_
         }
     }
 
+    std::vector<ob::Event> events;
+
     for (const auto& cmd : *cmds_opt)
     {
-        const auto events = eng.apply(cmd);
+        events.clear();
+        eng.apply(cmd, events);
+
         for (const auto& e : events)
         {
             std::cout << ob::event_to_line(e) << "\n";
@@ -102,7 +106,8 @@ static int replay_script(const std::string& script_path, const std::string& even
 
     std::vector<std::string> actual_lines;
     {
-        const auto events = eng.apply_all(*cmds_opt);
+        std::vector<ob::Event> events;
+        eng.apply_all(*cmds_opt, events);
         actual_lines.reserve(events.size());
 
         for (const auto& e : events)
@@ -169,17 +174,28 @@ static int bench_script(const std::string& script_path, std::uint64_t iters)
 
     std::uint64_t total_events { 0 };
 
-    const auto t0 = clock::now();
+    // pre allocate event sink
+    std::vector<ob::Event> events;
+    events.reserve(100000); // prevent resizing
+
+    std::uint64_t total_ns { 0 };
+
+    ob::Engine eng;
+
     for (std::uint64_t i = 0; i < iters; ++i)
     {
-        ob::Engine eng;
+        eng.reset(); // clears state and keeps allocation
+        events.clear(); // reset size to 0
 
-        const auto events = eng.apply_all(*cmds_opt);
+        const auto t0 = clock::now();
+        eng.apply_all(*cmds_opt, events);
+        const auto t1 = clock::now();
+
+        total_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         total_events += static_cast<std::uint64_t>(events.size());
     }
-    const auto t1 = clock::now();
 
-    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    const auto ns = total_ns;
 
     const double per_iter_ns = static_cast<double>(ns) / static_cast<double>(iters);
     const double per_event_ns = (total_events > 0) ? (static_cast<double>(ns) / static_cast<double>(total_events)) : 0.0;

@@ -16,11 +16,14 @@ namespace ob
     {
     public:
         // applies one command and returns produced events
-        std::vector<Event> apply(const Command& cmd);
-
+        void apply(const Command& cmd, std::vector<Event>& out_events);
+        
         // applies a list of commands and appends events
-        std::vector<Event> apply_all(const std::vector<Command>& cmds);
+        void apply_all(const std::vector<Command>& cmds, std::vector<Event>& out_events);
 
+        // completely resets internal orderbook state
+        void reset(); 
+        
         // enable file logging of events
         bool start_event_log(const std::string& path);
 

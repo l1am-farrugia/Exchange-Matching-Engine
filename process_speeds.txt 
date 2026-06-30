@@ -1,0 +1,42 @@
+Tracking benchmarks over commits.
+------------------------------------------
+
+Commit: perf(core): implement zero-allocation slab memory pool for orders
+
+-- Ran for 1 million iterations (bench iters)
+    bench iters=1000000 total_ns=8744806333
+    per_iter_ns=8744
+    per_event_ns=728
+
+Commit: perf(core): replace std::map with flat sorted vectors for cache locality
+
+-- Ran for 1 million iterations (bench iters)
+    bench iters=1000000 total_ns=8500216880
+    per_iter_ns=8500
+    per_event_ns=708
+
+Commit: perf(bench): reuse engine memory across iterations to eliminate OS allocation overhead
+
+-- Ran for 1 million iterations (bench iters)
+    bench iters=1000000 total_ns=1346563895
+    per_iter_ns=1346
+    per_event_ns=112
+
+-- Ran 50,000 events tightly clustered within a narrow 100 tick price window, for 100 iterations. (dense_script.txt)
+    Execution Time: ~26-27ns per event 
+    Hardware Profile: 8,311,352 L1 Data Cache Misses | 586,055,343 Branches
+
+-- Ran 50,000 events widely distributed across a highly sparse 200,000 tick spread, for 100 iterations. (deep_script.txt)
+    Execution Time: ~643ns per event
+    Hardware Profile: 4,659,815,340 L1 Data Cache Misses | 47,151,829,150 Branches
+
+Commit: perf(core): implement hierarchical bitmask for O(1) sparse price level lookups
+
+-- Ran for 100 iterations (bench iters) on deep_script.txt which is the sparse market
+    bench iters=100 total_ns=421153734
+    per_iter_ns=4211537
+    per_event_ns=30
+
+-- Ran 50,000 events widely distributed across a highly sparse 200,000 tick spread, for 100 iterations. (deep_script.txt)
+    Execution Time: 30ns per event
+    Hardware Profile: 15,841,090 L1 Data Cache Misses | 591,754,432 Branches

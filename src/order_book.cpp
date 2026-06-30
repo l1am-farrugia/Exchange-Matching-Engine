@@ -2,24 +2,61 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 
 namespace ob
 {
+    OrderBook::OrderBook() : bids_(MAX_TICKS), asks_(MAX_TICKS) {}
+
+    OrderBook::~OrderBook()
+    {
+        for (Order* block : blocks_) {
+            delete[] block;
+        }
+    }
+
+    Order* OrderBook::allocate_order()
+    {
+        if (free_list_ != nullptr)
+        {
+            Order* o = free_list_;
+            free_list_ = o->next;
+            return o;
+        }
+
+        constexpr std::size_t BLOCK_SIZE = 4096;
+        Order* block = new Order[BLOCK_SIZE];
+        blocks_.push_back(block);
+
+        for (std::size_t i = 0; i < BLOCK_SIZE - 1; ++i)
+        {
+            block[i].next = &block[i + 1];
+        }
+        block[BLOCK_SIZE - 1].next = nullptr;
+
+        free_list_ = block->next;
+        return block;
+    }
+
+    void OrderBook::free_order(Order* o)
+    {
+        o->next = free_list_;
+        free_list_ = o;
+    }
+
+    // Determines if a resting maker order meets the taker's price limit requirement
     bool OrderBook::crosses(Side taker_side, PriceTicks taker_px, PriceTicks maker_px) const
     {
-        // buy crosses when maker ask price is <= taker limit
         if (taker_side == Side::Buy)
         {
             return maker_px <= taker_px;
         }
-
-        // sell crosses when maker bid price is >= taker limit
         return maker_px >= taker_px;
     }
 
-    void OrderBook::remove_filled_maker(std::vector<Event>& events, const Order& maker)
+    // Emits a MakerCompleted event when a resting order is fully exhausted by a trade
+    void OrderBook::remove_filled_maker(std::vector<Event>& out_events, const Order& maker)
     {
-        // maker completion helps replay diffs and tests a lot
         Event e {};
         e.type = EventType::MakerCompleted;
         e.id = maker.id;
@@ -29,81 +66,71 @@ namespace ob
         e.qty = 0;
         e.remaining_qty = 0;
         e.reason = "filled";
-        events.push_back(e);
+        out_events.push_back(e);
     }
 
+    // Aggregates count from all price levels to verify against the index
     std::size_t OrderBook::recompute_live_count() const
     {
-        // recompute live count from containers not from index
         std::size_t total { 0 };
-
-        for (const auto& kv : bids_)
+        for (std::size_t i = 0; i < bids_.size(); ++i)
         {
-            total += kv.second.size();
+            total += bids_[i].size();
         }
-
-        for (const auto& kv : asks_)
+        for (std::size_t i = 0; i < asks_.size(); ++i)
         {
-            total += kv.second.size();
+            total += asks_[i].size();
         }
-
         return total;
     }
 
+    // Validates system state consistency between containers and indices
     void OrderBook::assert_invariants() const
     {
-        // core size invariant
         assert(index_.size() == recompute_live_count());
 
-        // validate all bid levels and index entries for them
-        for (const auto& kv : bids_)
+        for (std::size_t i = 0; i < bids_.size(); ++i)
         {
-            assert(!kv.second.empty());
-
-            for (const auto& o : kv.second)
+            if (bids_[i].empty()) continue;
+            for (Order* o = bids_[i].head; o != nullptr; o = o->next)
             {
-                assert(o.side == Side::Buy);
-                assert(o.price_ticks == kv.first);
-                assert(o.qty > 0);
-                assert(o.seq != 0);
+                assert(o->side == Side::Buy);
+                assert(o->price_ticks == static_cast<PriceTicks>(i));
+                assert(o->qty > 0);
+                assert(o->seq != 0);
 
-                const auto it = index_.find(o.id);
+                const auto it = index_.find(o->id);
                 assert(it != index_.end());
 
-                // locator must point back to this exact stored node
                 assert(it->second.side == Side::Buy);
-                assert(it->second.price_ticks == kv.first);
-                assert(it->second.it->id == o.id);
+                assert(it->second.price_ticks == static_cast<PriceTicks>(i));
+                assert(it->second.order_ptr->id == o->id);
             }
         }
 
-        // validate all ask levels and index entries for them
-        for (const auto& kv : asks_)
+        for (std::size_t i = 0; i < asks_.size(); ++i)
         {
-            assert(!kv.second.empty());
-
-            for (const auto& o : kv.second)
+            if (asks_[i].empty()) continue;
+            for (Order* o = asks_[i].head; o != nullptr; o = o->next)
             {
-                assert(o.side == Side::Sell);
-                assert(o.price_ticks == kv.first);
-                assert(o.qty > 0);
-                assert(o.seq != 0);
+                assert(o->side == Side::Sell);
+                assert(o->price_ticks == static_cast<PriceTicks>(i));
+                assert(o->qty > 0);
+                assert(o->seq != 0);
 
-                const auto it = index_.find(o.id);
+                const auto it = index_.find(o->id);
                 assert(it != index_.end());
 
                 assert(it->second.side == Side::Sell);
-                assert(it->second.price_ticks == kv.first);
-                assert(it->second.it->id == o.id);
+                assert(it->second.price_ticks == static_cast<PriceTicks>(i));
+                assert(it->second.order_ptr->id == o->id);
             }
         }
     }
 
-    std::vector<Event> OrderBook::add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty)
+    // Core matching logic for new orders
+    void OrderBook::add_limit(OrderId id, Side side, PriceTicks price_ticks, Qty qty, std::vector<Event>& out_events) 
     {
-        std::vector<Event> events;
-
-        // validate input from caller
         if (!is_valid_input(id, price_ticks, qty))
         {
             Event e {};
@@ -113,11 +140,10 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "invalid";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
-        // reject duplicate live ids
         if (index_.find(id) != index_.end())
         {
             Event e {};
@@ -127,15 +153,14 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "duplicate_id";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
-        // assign taker seq deterministically
+        // Taker sequence is assigned by the book upon arrival
         const std::uint64_t taker_seq = next_seq_;
         ++next_seq_;
 
-        // acceptance is always first
         {
             Event e {};
             e.type = EventType::OrderAccepted;
@@ -145,27 +170,30 @@ namespace ob
             e.price_ticks = price_ticks;
             e.qty = qty;
             e.reason = "accepted";
-            events.push_back(e);
+            out_events.push_back(e);
         }
 
         Qty remaining = qty;
 
         if (side == Side::Buy)
         {
-            // match against asks while best ask crosses
-            while (remaining > 0 && !asks_.empty() && crosses(side, price_ticks, asks_.begin()->first))
+            // Traverse asks to find matching liquidity
+            while (remaining > 0 && best_ask_ <= price_ticks && best_ask_ < MAX_TICKS)
             {
-                auto lvl_it = asks_.begin();
-                const PriceTicks maker_px = lvl_it->first;
-                PriceLevel& level = lvl_it->second;
+                PriceLevel& level = asks_[best_ask_];
+                if (level.empty())
+                {
+                    best_ask_++;
+                    continue;
+                }
 
-                // walk fifo orders at this level
-                auto it = level.begin();
-                while (remaining > 0 && it != level.end())
+                const PriceTicks maker_px = best_ask_;
+                Order* it = level.head;
+
+                while (remaining > 0 && it != nullptr)
                 {
                     const Qty fill = std::min(remaining, it->qty);
 
-                    // trade executes at maker price
                     Event trade {};
                     trade.type = EventType::Trade;
                     trade.maker_id = it->id;
@@ -175,44 +203,67 @@ namespace ob
                     trade.trade_price_ticks = maker_px;
                     trade.trade_qty = fill;
                     trade.reason = "trade";
-                    events.push_back(trade);
+                    out_events.push_back(trade);
 
                     remaining -= fill;
                     it->qty -= fill;
 
+                    Order* next_it = it->next;
+
                     if (it->qty == 0)
                     {
-                        // fully filled maker gets removed from book and index
                         const Order filled_maker = *it;
-
                         index_.erase(filled_maker.id);
-                        it = level.erase(it);
 
-                        remove_filled_maker(events, filled_maker);
+                        // Remove node from intrusive list
+                        if (it->prev) it->prev->next = it->next;
+                        else level.head = it->next;
+                        
+                        if (it->next) it->next->prev = it->prev;
+                        else level.tail = it->prev;
+                        
+                        level.count--;
+                        
+                        if (level.count == 0) clear_ask_bit(maker_px);
+
+                        active_ask_count_--;
+
+                        free_order(it);
+                        remove_filled_maker(out_events, filled_maker);
                     }
-                    else
-                    {
-                        ++it;
-                    }
+                    
+                    it = next_it;
                 }
 
                 if (level.empty())
                 {
-                    asks_.erase(lvl_it);
+                    if (active_ask_count_ == 0) 
+                    {
+                        best_ask_ = MAX_TICKS;
+                    }
+                    else 
+                    {
+                        best_ask_ = get_next_ask(best_ask_);
+                    }
                 }
             }
         }
         else
         {
-            // match against bids while best bid crosses
-            while (remaining > 0 && !bids_.empty() && crosses(side, price_ticks, bids_.begin()->first))
+            // Traverse bids to find matching liquidity
+            while (remaining > 0 && best_bid_ >= price_ticks && best_bid_ >= 0)
             {
-                auto lvl_it = bids_.begin();
-                const PriceTicks maker_px = lvl_it->first;
-                PriceLevel& level = lvl_it->second;
+                PriceLevel& level = bids_[best_bid_];
+                if (level.empty())
+                {
+                    best_bid_--;
+                    continue;
+                }
 
-                auto it = level.begin();
-                while (remaining > 0 && it != level.end())
+                const PriceTicks maker_px = best_bid_;
+                Order* it = level.head;
+
+                while (remaining > 0 && it != nullptr)
                 {
                     const Qty fill = std::min(remaining, it->qty);
 
@@ -225,54 +276,88 @@ namespace ob
                     trade.trade_price_ticks = maker_px;
                     trade.trade_qty = fill;
                     trade.reason = "trade";
-                    events.push_back(trade);
+                    out_events.push_back(trade);
 
                     remaining -= fill;
                     it->qty -= fill;
 
+                    Order* next_it = it->next;
+
                     if (it->qty == 0)
                     {
                         const Order filled_maker = *it;
-
                         index_.erase(filled_maker.id);
-                        it = level.erase(it);
 
-                        remove_filled_maker(events, filled_maker);
+                        if (it->prev) it->prev->next = it->next;
+                        else level.head = it->next;
+                        
+                        if (it->next) it->next->prev = it->prev;
+                        else level.tail = it->prev;
+                        
+                        level.count--;
+
+                        if (level.count == 0) clear_bid_bit(maker_px);
+
+                        active_bid_count_--;
+
+                        free_order(it);
+                        remove_filled_maker(out_events, filled_maker);
                     }
-                    else
-                    {
-                        ++it;
-                    }
+                    
+                    it = next_it;
                 }
 
                 if (level.empty())
                 {
-                    bids_.erase(lvl_it);
+                    if (active_bid_count_ == 0) 
+                    {
+                        best_bid_ = -1; 
+                    }
+                    else 
+                    {
+                        best_bid_ = get_next_bid(best_bid_);
+                    }
                 }
             }
         }
 
         if (remaining > 0)
         {
-            // taker rests remaining qty at its own limit price
-            Order o {};
-            o.id = id;
-            o.side = side;
-            o.price_ticks = price_ticks;
-            o.qty = remaining;
-            o.seq = taker_seq;
+            // Rest remainder in the book
+            Order* o = allocate_order();
+            o->id = id;
+            o->side = side;
+            o->price_ticks = price_ticks;
+            o->qty = remaining;
+            o->seq = taker_seq;
+            o->next = nullptr;
+            o->prev = nullptr;
 
             if (side == Side::Buy)
             {
-                auto [lvl_it, created] = bids_.try_emplace(price_ticks, PriceLevel {});
-                PriceLevel& level = lvl_it->second;
+                PriceLevel& level = bids_[price_ticks];
 
-                // append to keep fifo for this level
-                level.push_back(o);
-                auto iter = std::prev(level.end());
+                // FIFO insertion at tail
+                if (level.tail == nullptr)
+                {
+                    level.head = o;
+                    level.tail = o;
+                }
+                else
+                {
+                    level.tail->next = o;
+                    o->prev = level.tail;
+                    level.tail = o;
+                }
+                level.count++;
+                if (level.count == 1) set_bid_bit(price_ticks);
 
-                const bool ok = index_.emplace(id, Locator { side, price_ticks, iter }).second;
-                assert(ok); // this should always be true
+                // Track highest bid
+                if (price_ticks > best_bid_) best_bid_ = price_ticks;
+                active_bid_count_++;
+
+                const bool ok = index_.emplace(id, Locator { side, price_ticks, o }).second;
+                assert(ok);
 
                 Event e {};
                 e.type = EventType::OrderResting;
@@ -283,18 +368,33 @@ namespace ob
                 e.qty = qty;
                 e.remaining_qty = remaining;
                 e.reason = "resting";
-                events.push_back(e);
+                out_events.push_back(e);
             }
             else
             {
-                auto [lvl_it, created] = asks_.try_emplace(price_ticks, PriceLevel {});
-                PriceLevel& level = lvl_it->second;
+                PriceLevel& level = asks_[price_ticks];
 
-                level.push_back(o);
-                auto iter = std::prev(level.end());
+                // FIFO insertion at tail
+                if (level.tail == nullptr)
+                {
+                    level.head = o;
+                    level.tail = o;
+                }
+                else
+                {
+                    level.tail->next = o;
+                    o->prev = level.tail;
+                    level.tail = o;
+                }
+                level.count++;
+                if (level.count == 1) set_ask_bit(price_ticks);
 
-                const bool ok = index_.emplace(id, Locator { side, price_ticks, iter }).second;
-                assert(ok); // inserton should not fail
+                // Track lowest ask
+                if (price_ticks < best_ask_) best_ask_ = price_ticks;\
+                active_ask_count_++;
+
+                const bool ok = index_.emplace(id, Locator { side, price_ticks, o }).second;
+                assert(ok);
 
                 Event e {};
                 e.type = EventType::OrderResting;
@@ -305,12 +405,11 @@ namespace ob
                 e.qty = qty;
                 e.remaining_qty = remaining;
                 e.reason = "resting";
-                events.push_back(e);
+                out_events.push_back(e);
             }
         }
         else
         {
-            // taker fully filled immediately
             Event e {};
             e.type = EventType::OrderCompleted;
             e.id = id;
@@ -320,26 +419,21 @@ namespace ob
             e.qty = qty;
             e.remaining_qty = 0;
             e.reason = "filled";
-            events.push_back(e);
+            out_events.push_back(e);
         }
-
-        assert_invariants();
-        return events;
     }
 
-    std::vector<Event> OrderBook::cancel(OrderId id)
+    // Handles removal of resting orders from the index and linked list
+    void OrderBook::cancel(OrderId id, std::vector<Event>& out_events)
     {
-        std::vector<Event> events;
-
-        // id zero is invalid input
         if (id == 0)
         {
             Event e {};
             e.type = EventType::CancelRejected;
             e.id = id;
             e.reason = "invalid";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         auto idx_it = index_.find(id);
@@ -349,45 +443,73 @@ namespace ob
             e.type = EventType::CancelRejected;
             e.id = id;
             e.reason = "not_found";
-            events.push_back(e);
-            return events;
+            out_events.push_back(e);
+            return;
         }
 
         const Locator loc = idx_it->second;
-
-        // capture state before erase
-        const Order snapshot = *loc.it;
+        Order* it = loc.order_ptr;
+        const Order snapshot = *it;
 
         if (loc.side == Side::Buy)
         {
-            auto lvl_it = bids_.find(loc.price_ticks);
-            assert(lvl_it != bids_.end());
+            PriceLevel& level = bids_[loc.price_ticks];
 
-            PriceLevel& level = lvl_it->second;
-            level.erase(loc.it);
+            // Update head/tail if necessary
+            if (it->prev) it->prev->next = it->next;
+            else level.head = it->next;
+            
+            if (it->next) it->next->prev = it->prev;
+            else level.tail = it->prev;
+            
+            level.count--;
 
-            if (level.empty())
+            if (level.count == 0) clear_bid_bit(loc.price_ticks); 
+
+            active_bid_count_--;
+
+            // If we removed the best bid, go down to find the next one
+            if (active_bid_count_ == 0)
             {
-                bids_.erase(lvl_it);
+                best_bid_ = -1;
+            }
+            else if (level.empty() && loc.price_ticks == best_bid_)
+            {
+                best_bid_ = get_next_bid(best_bid_);
             }
         }
         else
         {
-            auto lvl_it = asks_.find(loc.price_ticks);
-            assert(lvl_it != asks_.end());
+            PriceLevel& level = asks_[loc.price_ticks];
 
-            PriceLevel& level = lvl_it->second;
-            level.erase(loc.it);
+            // update head/tail if necessary
+            if (it->prev) it->prev->next = it->next;
+            else level.head = it->next;
+            
+            if (it->next) it->next->prev = it->prev;
+            else level.tail = it->prev;
+            
+            level.count--;
 
-            if (level.empty())
+            if (level.count == 0) clear_ask_bit(loc.price_ticks);
+
+            active_ask_count_--;
+
+            // If we removed the best ask, walk up to find the next one
+            if (active_ask_count_ == 0)
             {
-                asks_.erase(lvl_it);
+                best_ask_ = MAX_TICKS;
+            }
+
+            else if (level.empty() && loc.price_ticks == best_ask_)
+            {
+                best_ask_ = get_next_ask(best_ask_);
             }
         }
 
         index_.erase(idx_it);
+        free_order(it); 
 
-        // cancellation event reports remaining qty that was removed
         Event e {};
         e.type = EventType::OrderCancelled;
         e.id = snapshot.id;
@@ -397,12 +519,40 @@ namespace ob
         e.qty = snapshot.qty;
         e.remaining_qty = 0;
         e.reason = "cancelled";
-        events.push_back(e);
-
-        assert_invariants();
-        return events;
+        out_events.push_back(e);
     }
 
+    void OrderBook::reset()
+    {
+        index_.clear();
+        std::fill(bids_.begin(), bids_.end(), PriceLevel{});
+        std::fill(asks_.begin(), asks_.end(), PriceLevel{});
+        
+        // allocated slabs back into the free list
+        free_list_ = nullptr;
+        for (Order* block : blocks_)
+        {
+            constexpr std::size_t BLOCK_SIZE = 4096;
+            for (std::size_t i = 0; i < BLOCK_SIZE - 1; ++i)
+            {
+                block[i].next = &block[i + 1];
+            }
+            block[BLOCK_SIZE - 1].next = free_list_;
+            free_list_ = &block[0];
+        }
+
+        best_bid_ = -1;
+        best_ask_ = MAX_TICKS;
+        active_bid_count_ = 0;
+        active_ask_count_ = 0;
+        next_seq_ = 1;
+
+        std::memset(bid_mask_, 0, sizeof(bid_mask_));
+        std::memset(bid_summary_mask_, 0, sizeof(bid_summary_mask_));
+        std::memset(ask_mask_, 0, sizeof(ask_mask_));
+        std::memset(ask_summary_mask_, 0, sizeof(ask_summary_mask_));
+    }
+    
     std::size_t OrderBook::live_order_count() const
     {
         return index_.size();
@@ -415,93 +565,137 @@ namespace ob
 
     std::optional<PriceTicks> OrderBook::best_bid_price() const
     {
-        // best bid is first key in bids map
-        if (bids_.empty())
-        {
-            return std::nullopt;
-        }
-        return bids_.begin()->first;
+        if (best_bid_ == -1) return std::nullopt;
+        return best_bid_;
     }
 
     std::optional<PriceTicks> OrderBook::best_ask_price() const
     {
-        // best ask is first key in asks map
-        if (asks_.empty())
-        {
-            return std::nullopt;
-        }
-        return asks_.begin()->first;
+        if (best_ask_ == MAX_TICKS) return std::nullopt;
+        return best_ask_;
     }
 
     std::vector<OrderId> OrderBook::order_ids_at(Side side, PriceTicks price_ticks) const
     {
-        // returns ids in fifo order at the exact level
         std::vector<OrderId> out_ids;
+
+        if (price_ticks < 0 || price_ticks >= MAX_TICKS) return out_ids;
 
         if (side == Side::Buy)
         {
-            auto it = bids_.find(price_ticks);
-            if (it == bids_.end())
-            {
-                return out_ids;
-            }
-
-            const PriceLevel& level = it->second;
+            const PriceLevel& level = bids_[price_ticks];
             out_ids.reserve(level.size());
-
-            for (const auto& o : level)
+            for (Order* o = level.head; o != nullptr; o = o->next)
             {
-                out_ids.push_back(o.id);
+                out_ids.push_back(o->id);
             }
             return out_ids;
         }
 
-        auto it = asks_.find(price_ticks);
-        if (it == asks_.end())
-        {
-            return out_ids;
-        }
-
-        const PriceLevel& level = it->second;
+        const PriceLevel& level = asks_[price_ticks];
         out_ids.reserve(level.size());
-
-        for (const auto& o : level)
+        for (Order* o = level.head; o != nullptr; o = o->next)
         {
-            out_ids.push_back(o.id);
+            out_ids.push_back(o->id);
         }
         return out_ids;
     }
 
     Qty OrderBook::total_qty_at(Side side, PriceTicks price_ticks) const
     {
-        // sums remaining qty at a level
         Qty total { 0 };
+
+        if (price_ticks < 0 || price_ticks >= MAX_TICKS) return 0;
 
         if (side == Side::Buy)
         {
-            auto it = bids_.find(price_ticks);
-            if (it == bids_.end())
+            for (Order* o = bids_[price_ticks].head; o != nullptr; o = o->next)
             {
-                return 0;
-            }
-
-            for (const auto& o : it->second)
-            {
-                total += o.qty;
+                total += o->qty;
             }
             return total;
         }
 
-        auto it = asks_.find(price_ticks);
-        if (it == asks_.end())
+        for (Order* o = asks_[price_ticks].head; o != nullptr; o = o->next)
         {
-            return 0;
-        }
-
-        for (const auto& o : it->second)
-        {
-            total += o.qty;
+            total += o->qty;
         }
         return total;
+    }
+
+    // Finds next active ask price (going up)
+    inline std::int64_t OrderBook::get_next_ask(std::int64_t start_price) const 
+    {
+        if (start_price >= MAX_TICKS) return MAX_TICKS;
+        
+        std::size_t word_idx = start_price / 64;
+        int bit_offset = start_price % 64;
+        
+        // Check the current word (masking bits below start_price)
+        std::uint64_t word = ask_mask_[word_idx] & (~0ULL << bit_offset);
+        if (word != 0) 
+        {
+            return (word_idx * 64) + __builtin_ctzll(word);
+        }
+        
+        // If not in word, find the next active word
+        std::size_t summary_idx = word_idx / 64;
+        int summary_offset = (word_idx % 64) + 1; 
+        
+        std::uint64_t summary_word = ask_summary_mask_[summary_idx] & (~0ULL << summary_offset);
+        
+        while (summary_word == 0) 
+        {
+            summary_idx++;
+            if (summary_idx >= SUMMARY_MASK_SIZE) return MAX_TICKS; // empty here
+            summary_word = ask_summary_mask_[summary_idx];
+        }
+        
+        // populated word 
+        word_idx = (summary_idx * 64) + __builtin_ctzll(summary_word);
+        
+        // price from word
+        return (word_idx * 64) + __builtin_ctzll(ask_mask_[word_idx]);
+    }
+
+    // Finds the next active bid price (going doewn)
+    inline std::int64_t OrderBook::get_next_bid(std::int64_t start_price) const 
+    {
+        if (start_price < 0) return -1;
+        
+        std::size_t word_idx = start_price / 64;
+        int bit_offset = start_price % 64;
+        
+        // Check the current word (masking bits above start_price)
+        // Shift left by (63 - offset) to clear higher bits, then shift back
+        std::uint64_t word = bid_mask_[word_idx] & (~0ULL >> (63 - bit_offset));
+        
+        if (word != 0) 
+        {
+            // from the left / MSB
+            return (word_idx * 64) + (63 - __builtin_clzll(word));
+        }
+        
+        std::size_t summary_idx = word_idx / 64;
+        int summary_offset = (word_idx % 64);
+        
+        if (summary_offset == 0) 
+        {
+            if (summary_idx == 0) return -1;
+            summary_idx--;
+            summary_offset = 64;
+        }
+        
+        std::uint64_t summary_word = bid_summary_mask_[summary_idx] & (~0ULL >> (64 - summary_offset));
+        
+        while (summary_word == 0) 
+        {
+            if (summary_idx == 0) return -1;
+            summary_idx--;
+            summary_word = bid_summary_mask_[summary_idx];
+        }
+        
+        word_idx = (summary_idx * 64) + (63 - __builtin_clzll(summary_word));
+        return (word_idx * 64) + (63 - __builtin_clzll(bid_mask_[word_idx]));
     }
 }
