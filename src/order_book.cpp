@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 
 namespace ob
 {
@@ -222,6 +223,9 @@ namespace ob
                         else level.tail = it->prev;
                         
                         level.count--;
+                        
+                        if (level.count == 0) clear_ask_bit(maker_px);
+
                         active_ask_count_--;
 
                         free_order(it);
@@ -239,10 +243,7 @@ namespace ob
                     }
                     else 
                     {
-                        while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
-                        {
-                            best_ask_++;
-                        }
+                        best_ask_ = get_next_ask(best_ask_);
                     }
                 }
             }
@@ -294,6 +295,9 @@ namespace ob
                         else level.tail = it->prev;
                         
                         level.count--;
+
+                        if (level.count == 0) clear_bid_bit(maker_px);
+
                         active_bid_count_--;
 
                         free_order(it);
@@ -311,10 +315,7 @@ namespace ob
                     }
                     else 
                     {
-                        while (best_bid_ >= 0 && bids_[best_bid_].empty()) 
-                        {
-                            best_bid_--;
-                        }
+                        best_bid_ = get_next_bid(best_bid_);
                     }
                 }
             }
@@ -349,6 +350,7 @@ namespace ob
                     level.tail = o;
                 }
                 level.count++;
+                if (level.count == 1) set_bid_bit(price_ticks);
 
                 // Track highest bid
                 if (price_ticks > best_bid_) best_bid_ = price_ticks;
@@ -385,6 +387,7 @@ namespace ob
                     level.tail = o;
                 }
                 level.count++;
+                if (level.count == 1) set_ask_bit(price_ticks);
 
                 // Track lowest ask
                 if (price_ticks < best_ask_) best_ask_ = price_ticks;\
@@ -460,6 +463,9 @@ namespace ob
             else level.tail = it->prev;
             
             level.count--;
+
+            if (level.count == 0) clear_bid_bit(loc.price_ticks); 
+
             active_bid_count_--;
 
             // If we removed the best bid, go down to find the next one
@@ -469,10 +475,7 @@ namespace ob
             }
             else if (level.empty() && loc.price_ticks == best_bid_)
             {
-                while (best_bid_ >= 0 && bids_[best_bid_].empty())
-                {
-                    best_bid_--;
-                }
+                best_bid_ = get_next_bid(best_bid_);
             }
         }
         else
@@ -487,6 +490,9 @@ namespace ob
             else level.tail = it->prev;
             
             level.count--;
+
+            if (level.count == 0) clear_ask_bit(loc.price_ticks);
+
             active_ask_count_--;
 
             // If we removed the best ask, walk up to find the next one
@@ -494,12 +500,10 @@ namespace ob
             {
                 best_ask_ = MAX_TICKS;
             }
+
             else if (level.empty() && loc.price_ticks == best_ask_)
             {
-                while (best_ask_ < MAX_TICKS && asks_[best_ask_].empty())
-                {
-                    best_ask_++;
-                }
+                best_ask_ = get_next_ask(best_ask_);
             }
         }
 
@@ -542,6 +546,11 @@ namespace ob
         active_bid_count_ = 0;
         active_ask_count_ = 0;
         next_seq_ = 1;
+
+        std::memset(bid_mask_, 0, sizeof(bid_mask_));
+        std::memset(bid_summary_mask_, 0, sizeof(bid_summary_mask_));
+        std::memset(ask_mask_, 0, sizeof(ask_mask_));
+        std::memset(ask_summary_mask_, 0, sizeof(ask_summary_mask_));
     }
     
     std::size_t OrderBook::live_order_count() const
@@ -612,5 +621,81 @@ namespace ob
             total += o->qty;
         }
         return total;
+    }
+
+    // Finds next active ask price (going up)
+    inline std::int64_t OrderBook::get_next_ask(std::int64_t start_price) const 
+    {
+        if (start_price >= MAX_TICKS) return MAX_TICKS;
+        
+        std::size_t word_idx = start_price / 64;
+        int bit_offset = start_price % 64;
+        
+        // Check the current word (masking bits below start_price)
+        std::uint64_t word = ask_mask_[word_idx] & (~0ULL << bit_offset);
+        if (word != 0) 
+        {
+            return (word_idx * 64) + __builtin_ctzll(word);
+        }
+        
+        // If not in word, find the next active word
+        std::size_t summary_idx = word_idx / 64;
+        int summary_offset = (word_idx % 64) + 1; 
+        
+        std::uint64_t summary_word = ask_summary_mask_[summary_idx] & (~0ULL << summary_offset);
+        
+        while (summary_word == 0) 
+        {
+            summary_idx++;
+            if (summary_idx >= SUMMARY_MASK_SIZE) return MAX_TICKS; // empty here
+            summary_word = ask_summary_mask_[summary_idx];
+        }
+        
+        // populated word 
+        word_idx = (summary_idx * 64) + __builtin_ctzll(summary_word);
+        
+        // price from word
+        return (word_idx * 64) + __builtin_ctzll(ask_mask_[word_idx]);
+    }
+
+    // Finds the next active bid price (going doewn)
+    inline std::int64_t OrderBook::get_next_bid(std::int64_t start_price) const 
+    {
+        if (start_price < 0) return -1;
+        
+        std::size_t word_idx = start_price / 64;
+        int bit_offset = start_price % 64;
+        
+        // Check the current word (masking bits above start_price)
+        // Shift left by (63 - offset) to clear higher bits, then shift back
+        std::uint64_t word = bid_mask_[word_idx] & (~0ULL >> (63 - bit_offset));
+        
+        if (word != 0) 
+        {
+            // from the left / MSB
+            return (word_idx * 64) + (63 - __builtin_clzll(word));
+        }
+        
+        std::size_t summary_idx = word_idx / 64;
+        int summary_offset = (word_idx % 64);
+        
+        if (summary_offset == 0) 
+        {
+            if (summary_idx == 0) return -1;
+            summary_idx--;
+            summary_offset = 64;
+        }
+        
+        std::uint64_t summary_word = bid_summary_mask_[summary_idx] & (~0ULL >> (64 - summary_offset));
+        
+        while (summary_word == 0) 
+        {
+            if (summary_idx == 0) return -1;
+            summary_idx--;
+            summary_word = bid_summary_mask_[summary_idx];
+        }
+        
+        word_idx = (summary_idx * 64) + (63 - __builtin_clzll(summary_word));
+        return (word_idx * 64) + (63 - __builtin_clzll(bid_mask_[word_idx]));
     }
 }
