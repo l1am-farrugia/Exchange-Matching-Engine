@@ -5,23 +5,22 @@
 - Buy orders match the lowest ask prices first while price <= buy limit.
 - Sell orders match the highest bid prices first while price >= sell limit.
 - Trades execute at the maker price.
-- Partial fils are supported and remaining qty stays resting or becomes resting.
+- Partial fills are supported and remaining qty stays resting or becomes resting.
 
 ## Data Structures
-- Bids and asks use std::map for determinitic best price selection.
-  - Bids are sorted highest to lowest.
-  - Asks are sorted lowest to highest.
-- Each price level stores orders in std::list to keep fifo and stable iterators.
-- An id index maps order id to a locator (side price and list iterator) for fast cancel.
+- Bids and asks are stored in direct-mapped static arrays where the price tick serves as the direct memory index for O(1) lookups.
+- Queue priority is managed via intrusive doubly-linked lists by embedding the next and prev pointers directly inside the Order struct to ensure optimal L1 cache line utilisation.
+- Active price levels are tracked using a two-tiered hierarchical bitmask index, allowing the engine to instantly bypass empty ticks.
+- All order nodes are pre-allocated at startup inside a custom slab memory pool and recycled through an intrusive free list to eliminate runtime heap allocations.
+- A master index maps order IDs directly to memory locations to provide O(1) order cancellation.
 
 ## Determinism Strategy
-- Script commands are applied in order.
-- Events are emitted in a deterministic order from the matching loop.
-- Event logs use a stable single line key value format.
-- Replay will rerun the script and compare event lines.
+- The entire execution footprint is bounded and allocated at system startup to isolate the hot path from operating system memory jitter.
+- A reset() routine clears active indices and bitmasks between execution passes while preserving the underlying raw memory capacity.
+- Inbound commands are processed sequentially, and outbound market events are emitted in a rigid, single line key-value log format for precise replay verification.
 
 ## Invariants
 - Index size matches total number of resting orders across all levels.
-- No empty price levels remain.
+- The hierarchical bitmask accurately reflects book state: bits are flipped to 1 if a price level has orders, and cleared to 0 when empty.
+- All unallocated order structures exist cleanly within the memory pool's free list chain
 - All resting orders have qty > 0 and seq != 0.
-- Each order id in levels exists in index and the locator points to the same order.
